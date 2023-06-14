@@ -1,0 +1,384 @@
+---
+title: "Examen modulo 1"
+author: "Charivel Fermin"
+date: "2023-05-11"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Preguntas de investigación
+
+1. **Describir autocorrelación espacial, autocorrelación espacial positiva, y autocorrelación espcial negativa**
+   - **Autocorrelación espacial: ** la autocorrelación espacial nos ayuda a identificar el nivel de de correlación que tiene el valor de una variable consigo misma en el espacio, en palabras más simple ayuda la similitud de objetos u observación en un plano espacial (R Spatial, 2019)
+   - **Autocorrelación espacial positiva: ** es cuando existe un cluster u agrupamiento de valores similares en el espacio, es decir cuando los valores vecinos son similares, este es el tipo de autocorrelación más común (GISGeography, 2014).
+   - **Autocorrelación espacial negativa: ** contrario a la autocorrelación espacial positiva, la negativa se da cuando valores disimilares se agrupan en el espacio, es decir los vecinos tienen caracteríssticas diferentes (GISGeography, 2014)
+   
+2. **Describir los conceptos de autocorrelación espacial y no estacionariedad en un contexto de análisis espacial de datos** 
+   - Autocorrelación espacial busca mostrar el nivel de similitud de un objeto con sus vecinos en el espacio, la no estacionaridad espacial se da cuando la variable de interés no es constante en la región estudiada, también conocido como heterogeneidad espacial, cuando esto sucede existe una violación al supuesto de estacionaridad, que afirma una constante en las propiedades estadísticas de una variable en el espacio (GIS&T, 2016)
+  
+3. **Describir al menos 3-5 diferencias entre análisis exploratorio de datos (EDA) y análisis exploratorio espacial de datos (ESDA)**
+   - EDA no investiga explícitamente el componente espacial de un set de datos, mientras que ESDA sí lo hace (Abdishakur, 2019)
+   - Al momento de hacer la visualización de datos en el EDA no se hace un discriminación de locación geográfica mientras en el ESDA sí, por lo cuál mucha de su representación se hace directamente en mapas (Abdishakur, 2019)
+   - Los análisis ESDA suelen aplicarse en ramas como la geografía, la ecología y el crimen, por su alta necesidad de tomar en cosideración el espacio como una variable de alto peso, los análisis EDA son más usados en ramas como los negocios y ciencias sociales donde la investigación se centra más en insights de patrones no espaciales (Dall’erba, 2009).
+   - En cuanto a la estructura de los datos para el EDA no es necesario el componente espacial, mientras que para ESDA es necesario contar con datos georeferenciados y no simplemente el nombre de la localidad (Abdishakur, 2019)
+
+4. **Escribir al menos 3-5 diferencias entre GWR y GRF**
+   - La principal diferencia entre un GWR y GRF es que debido a la naturaleza de boostrapping de un GFR es más difícil que este modelo sufra de overfitting pues relaja los supuestos de las estadísticas gaussianas tradicionales (R: Geographically Weighted Random Forest, 2019)
+   - El GWR se basa en una regresión, mientras GRF se basa en un modelo de machine learning (R: Geographically Weighted Random Forest, 2019).
+   - El GWR requiere de una base de datos georeferenciada mientras mientras el GRF al ser un modelo de machine learning puede trabajar con cualquier tipo de variable predictora (Bandwidth selection for basic GWR, 2022).
+
+5. **Describir 3-5 recomendaciones para reducir o eliminar la presencia de autocorrelación espacial en los residuales de un modelo de regresión estimado.**
+   - Transformar los datos usando el logaritmo o la raíz cuadrada de la variable dependiente, pues ayuda a reducir el peso de los outliers que a su vez afectan la autocorrelación espacial en los residuos (Guélat, 2013).
+   - Así como se puede transformar los datos usando log o raíz cuadrada se pueden directamente quitar los outliers o modificarlos con la media (Guélat, 2013).
+   - Reevlauar la elección de variables de entrada hasta que ya no exista autocorrelación significativa (ArcGIS, 2019).
+
+# Análisis Exploratorio de Datos (EDA)
+
+
+```{r warning=FALSE, include=FALSE}
+library(Hmisc)
+library(sf)
+library(tmap)
+library(spdep)
+library(rgdal)
+library(tidyverse)
+library(tigris)
+library(mapview)
+library(GWmodel)    
+library(regclass)
+library(viridis)
+library(grid)
+library(RColorBrewer)
+library(rgeoda)
+library(sjPlot)
+library(jtools)
+library(dlookr)
+library(SpatialML)
+library(spgwr)
+library(grid)
+library(corrplot)
+library(ncf)
+library(caret)
+library(car)
+library(dplyr)
+```
+
+
+```{r}
+data(columbus) ### dataset
+columbus_shp <- readShapePoly(system.file("etc/shapes/columbus.shp", package="spdep"))
+### shapefile
+#col.gal.nb <- read.gal(system.file("etc/weights/columbus.gal", package="spdep"))
+### matriz de conectividad espacial pero requiere calcular los pesos espaciales.
+```
+
+
+```{r}
+##eliminar columnas con nombres dupliccados
+columbus <- columbus[, -c(1, 2)]
+```
+
+## Descripción de variables de interés
+
+```{r}
+columbus <- columbus %>% select(HOVAL, INC, DISCBD, CRIME, PLUMB)
+```
+
+Se seleccionarone estas variables según la descripción mostrada, pues de toda la base de datos fueron las características consideradas más relevantes para la variable dependiente que en este caso será **HOVAL**
+
+*HOVAL:* valor de la vivienda (en \$1,000)
+
+*INC:* ingresos del hogar (en \$1,000)
+
+*CRIME:* robos residenciales y robos de vehículos por cada mil hogares en el barrio
+
+*PLUMB:* porcentaje de unidades de vivienda sin plomería
+
+*DISCBD:* distancia a CDB
+
+```{r}
+summary(columbus)
+```
+Se pueden observar diferentes estadísticos que muestran la tendencia de las variables, más adelante se confirmará en los gráficos como variables como PLUM no siguen una distribución normal.
+
+```{r}
+plot_normality(columbus, HOVAL, INC, DISCBD, CRIME, PLUMB)
+```
+
+Observando los histogramas de cada variable se pueden ver como varias no siguen una distribución normal, para poder reducir su sesgo se harán transformaciones logaritmicas o de raíz cuadrada a conveniencia de cada varible en particular.
+
+```{r}
+boxplot(columbus$HOVAL)
+boxplot(columbus$INC)
+boxplot(columbus$DISCBD)
+boxplot(columbus$CRIME)
+boxplot(columbus$PLUM)
+```
+
+Con los boxplot hechos la presencia de outliers puede confirmar la falta de distribución normal en las variables.
+
+## Transformación de variables 
+
+```{r}
+columbus$HOVAL <- log(columbus$HOVAL)
+columbus$INC <- log(columbus$INC)
+columbus$PLUM <- log(columbus$PLUM)
+```
+
+Se realizó una transformación logaritmica a aquellas variables que contaban con falta de normalidad, siendo un cambio directo a la base de datos ya no será necesario especificar su transformación en los modelos. 
+
+# Análisis Exploratorio Espacial de los Datos (ESDA)
+
+```{r}
+swm_queen <- poly2nb(columbus_shp, queen = TRUE)
+rswm_queen <- nb2listw(swm_queen, style = "W", zero.policy = TRUE)
+coords <- coordinates(columbus_shp)
+```
+
+## Autocorrelación espacial global
+
+```{r}
+moran.test(columbus_shp$HOVAL, listw = rswm_queen, zero.policy = TRUE, na.action = na.omit)
+moran.test(columbus_shp$INC, listw = rswm_queen, zero.policy = TRUE, na.action = na.omit)
+moran.test(columbus_shp$CRIME, listw = rswm_queen, zero.policy = TRUE, na.action = na.omit)
+moran.test(columbus_shp$PLUMB, listw = rswm_queen, zero.policy = TRUE, na.action = na.omit)
+moran.test(columbus_shp$DISCBD, listw = rswm_queen, zero.policy = TRUE, na.action = na.omit)
+```
+
+Este test es usado para mostrar la autocorrelación global de las diferentes variables de interés.
+
+*HOVAL:* sí existe presencia de auotcorrelación espacial significativa, débil y positiva.
+
+*INC:* sí existe presencia de auotcorrelación espacial significativa, moderada y positiva.
+
+*CRIME:* sí existe presencia de auotcorrelación espacial significativa, alta y positiva.
+
+*PLUMB:* sí existe presencia de auotcorrelación espacial significativa, moderada y positiva.
+
+*DISCBD:* sí existe presencia de auotcorrelación espacial significativa, alta y positiva.
+
+La variable de HOVAL es la variable con autocorrelación más débil y la de DISCBD con autocorrelación más fuerte.
+
+## Autocorrelación espacial local
+
+```{r warning=FALSE}
+columbus_shp$sp_HOVAL<-lag.listw(rswm_queen,columbus_shp$HOVAL,zero.policy=TRUE)
+columbus_shp$sp_INC<-lag.listw(rswm_queen,columbus_shp$INC,zero.policy=TRUE)
+columbus_shp$sp_CRIME<-lag.listw(rswm_queen,columbus_shp$CRIME,zero.policy=TRUE)
+columbus_shp$sp_PLUMB<-lag.listw(rswm_queen,columbus_shp$PLUMB,zero.policy=TRUE)
+columbus_shp$sp_DISCBD<-lag.listw(rswm_queen,columbus_shp$DISCBD,zero.policy=TRUE)
+```
+
+En los siguientes mapas se hará la demostración de las variables antes de ser transformadas y después, a fin de mostrar las concentraciones o clústers.
+
+```{r warning=FALSE}
+qtm(columbus_shp, "HOVAL") 
+qtm(columbus_shp, "sp_HOVAL")
+```
+```{r warning=FALSE}
+qtm(columbus_shp, "INC") 
+qtm(columbus_shp, "sp_INC")
+```
+
+```{r warning=FALSE}
+qtm(columbus_shp, "CRIME") 
+qtm(columbus_shp, "sp_HOVAL")
+```
+
+```{r warning=FALSE}
+qtm(columbus_shp, "PLUMB") 
+qtm(columbus_shp, "sp_HOVAL")
+```
+
+
+```{r warning=FALSE}
+qtm(columbus_shp, "DISCBD") 
+qtm(columbus_shp, "sp_DISCBD")
+```
+
+Se puede observar como de manera local para todas las variables existen más agrupaciones en el lado este del mapa. También es notorio como aumentan las concentraciones una vez se hace la trasnformación espacial de los datos. sp_DISCBD es la única variable que muestra también fuertes agrupaciones en la parte oeste del mapa.
+
+# Estimación de Modelos de Predicción
+
+## Modelo no espacial
+
+```{r}
+non_spatial_model = lm(HOVAL ~ INC + DISCBD + CRIME + PLUMB, data = columbus) 
+summary(non_spatial_model)
+AIC(non_spatial_model)
+```
+
+Muestra ser un modelo significativo con todas las variables siendo de igual manera significativas, menos la de **INC**
+
+## Spatial Autoregressive Model (SAR)
+
+
+```{r}
+spatial_autoregressive <- lagsarlm(HOVAL ~ INC + DISCBD + CRIME +  PLUMB, data = columbus, listw = rswm_queen, Durbin = FALSE)
+summary(spatial_autoregressive)
+```
+
+Las variables muestran ser significativas por si solas (de nuevo, menos **INC**), pero el modelo no lo es.
+
+## Spatial Error Model (SEM)
+
+```{r}
+spatial_error<-errorsarlm(HOVAL ~ INC + DISCBD + CRIME +  PLUMB, data = columbus, listw = rswm_queen, Durbin = FALSE)
+summary(spatial_error)
+```
+Al igual que el modelo anterior las variables muestran ser significativas por si solas (menos **INC**), pero el modelo no lo es.
+
+
+## Spatial Durbin Model (Modelo Global)
+
+```{r}
+spatial_durbin <- lagsarlm(log(HOVAL) ~  log(INC) + DISCBD + CRIME +  log(PLUMB), data = columbus_shp, rswm_queen, type="mixed")
+summary(spatial_durbin)
+```
+Nuevamente este modelo no es significativo, sus variables sí, pero las lag de las variables, que muestra la relación con los vecinos no lo son, a pesar hasta ahora es el modelo con menor AIC.
+
+## Geographic Weighted Regression (GWR) (Modelo Local)
+```{r}
+bw1 <- bw.gwr(log(HOVAL) ~  log(INC) + DISCBD + CRIME +  log(PLUMB), 
+              approach = "AIC", adaptive = T, data = columbus_shp)
+```
+```{r}
+m.gwr <- gwr.basic(log(HOVAL) ~  log(INC) + DISCBD + CRIME +  log(PLUMB), adaptive = T, data = columbus_shp, bw = bw1) 
+m.gwr
+```
+
+Este muestra ser el mejor modelo al ser significativas tanto sus variables con como el modelo mismo, incluso es el modelo con menor AIC. 
+
+```{r}
+gwr_sf = st_as_sf(m.gwr$SDF)
+```
+
+
+```{r warning=FALSE}
+gwr_sf$exp_residuals <- exp(gwr_sf$residual)
+tm_shape(gwr_sf) +
+  tm_polygons(col = "exp_residuals", palette="PuBu", style="quantile", n=8, title="Residuals") +
+  tm_layout(title= 'Regression Residuals',  title.position = c('right', 'top'))
+```
+```{r}
+moran.test(gwr_sf$exp_residuals, rswm_queen) 
+```
+No se muestra autocorrelación en lo residuales, pues el Moran test aparte de salir bajo salió no significativo, esto muestra que es un buen modelo.
+
+# Diagnóstico de Resultados Estimados
+
+## Multicolinealidad
+
+```{r}
+vif(non_spatial_model)
+```
+
+El menor valor posible de VIF es uno es decir que hay ausencia de multicolinealidad. Como regla general, un valor VIF que mayo 5 o 10 indica una cantidad problemática de colinealidad (James et al. 2014), en este caso ninguna de las variables independientes muestra multicolinearidad.
+
+## Lagrange Multiplier Diagnostic for Spatial Dependence (LMlag)
+
+```{r}
+lm.LMtests(non_spatial_model,rswm_queen,test=c("RLMlag"))
+```
+
+Al resultar la prueba no significativa, la prueba LM de dependencia espacial nos dice que no debemos considerar el spatial lag de la variable dependiente en nuestro modelo de regresión. 
+
+## Lagrange Multiplier Diagnostic for Spatial Error Dependence (LMerr)
+
+```{r}
+lm.LMtests(non_spatial_model,rswm_queen,test=c("RLMerr"))
+```
+Nuevamente con la prueba siendo no significativa lpara la dependencia del error espacial, no debemos considerar el spattial lag del término de error en nuestro modelo de regresión.
+
+## Autocorrelación Espacial de los residuales estimados (εi)
+
+```{r}
+# detectar residuos de regresión espacialmente autocorrelacionados / no espacialmente autocorrelacionados
+columbus_shp$non_spatial_regression_residuals <-non_spatial_model$residuals
+moran.test(non_spatial_model$residuals, rswm_queen)
+```
+Ya que estadística el resultado de la prueba es bajo y significativo, podemos decir que no hay concentración de residuales en Columbus. Este resultado significa que la especificación de nuestro modelo de regresión podría considerarse como una especificación correcta.
+
+```{r}
+gwr_sf$exp_residuals <- exp(gwr_sf$residual)
+
+moran.test(exp(spatial_autoregressive$residuals), rswm_queen) 
+moran.test(exp(spatial_error$residuals), rswm_queen) 
+moran.test(exp(spatial_durbin$residuals), rswm_queen) 
+moran.test(gwr_sf$exp_residuals, rswm_queen)
+```
+Ninguno de los modelos salió significativo por lo que podemos decir que no exitse correlación en los residuales del resto de modelos.
+
+# Selección de Modelo
+
+## Especificar e interpretar criterio de selección de modelo
+
+```{r}
+export_summs(non_spatial_model, spatial_autoregressive, spatial_error, spatial_durbin)
+```
+
+Tomando en cuenta toda la información anterior de los residuos y el AIC el modelo a elegir será el cuarto, pues fue el que tuvo e menor AIC y sí tuvo significancia.
+
+## Describir los principales 5-7 hallazgos identificados a partir de los resultados de ESDA y del modelo seleccionado
+
+   - Se muestra significacia espacial tanto para INC como PLUMB
+   - Ninguno de los modelos de regresión usados muestra autocorrelación espacial en los residuales, por lo que podemos decir que en general los modelos pueden ser apropiada para predecir el valor de una casa
+   - El crimen muestra ser significativo y reducir el valor de las casasa
+   - El la falta de plomería de counties vecinos afecta en 0.18 el valor de las casas de un countie en particular
+   - El ingreso de counties vecinos afecta en 0.45 el valor de las casas de un countie en particular
+
+
+## Visualizar e interpretar a través de mapa la predicción de los valores de la principal variable de interés (variable dependiente)
+
+A continuación se mostrarán las predicciones locales de la variable dependiente y de las idenpendientes que se mostraron significativas
+```{r warning=FALSE}
+gwr_sf$y_predicted <- exp(gwr_sf$yhat)
+tm_shape(gwr_sf) +
+  tm_polygons(col = "y_predicted", palette="PuBu", style="quantile", n=8) +
+   tm_layout(title= 'HOVAL',  title.position = c('right', 'top'))
+```
+
+Para la variable a predecir se pude ver como se predice un mayor valor de vivienda en las extremos Columbus, siendo el este y el norte las regiones con mayor valor de vivienda (HOVAL).
+
+```{r warning=FALSE}
+tm_shape(gwr_sf) +
+  tm_polygons(col = "DISCBD", palette="PuBu", style="quantile", n=8, title="t-statistic") +
+  tm_layout(title= 'DISCBD',  title.position = c('right', 'top'))
+```
+
+```{r warning=FALSE}
+tm_shape(gwr_sf) +
+  tm_polygons(col = "CRIME", palette="PuBu", style="quantile", n=8, title="t-statistic") +
+  tm_layout(title= 'CRIME',  title.position = c('right', 'top'))
+```
+
+Tanto para el crimen como para la distancia se muestra concentración en la parte norte de Columbus. 
+
+
+# Refrencias
+
+Abdishakur. (2019, November 5). What is Exploratory Spatial Data Analysis (ESDA)? - Towards Data Science. Medium; Towards Data Science. https://towardsdatascience.com/what-is-exploratory-spatial-data-analysis-esda-335da79026ee
+
+ArcGIS. (2019). Conceptos básicos del análisis de regresión—Ayuda | Documentación. Arcgis.com. https://desktop.arcgis.com/es/arcmap/10.7/tools/spatial-statistics-toolbox/regression-analysis-basics.htm
+
+Bandwidth selection for basic GWR. (2022). bw.gwr function - RDocumentation. Rdocumentation.org. https://www.rdocumentation.org/packages/GWmodel/versions/2.2-9/topics/bw.gwr
+
+Dall’erba, S. (2009). Exploratory Spatial Data Analysis. International Encyclopedia of Human Geography, 683–690. https://doi.org/10.1016/b978-008044910-4.00433-8
+
+GIS&T. (2016). spatial non-stationarity | GIS&T Body of Knowledge. Ucgis.org. https://gistbok.ucgis.org/topic-keywords/spatial-non-stationarity
+
+GISGeography. (2014, July 15). Spatial Autocorrelation and Moran’s I in GIS. GIS Geography. https://gisgeography.com/spatial-autocorrelation-moran-i-gis/
+
+Guélat, J. (2013). Spatial autocorrelation (modelling). Amazonaws.com. http://rstudio-pubs-static.s3.amazonaws.com/9687_cc323b60e5d542449563ff1142163f05.html
+
+James, Gareth, Daniela Witten, Trevor Hastie, and Robert Tibshirani. (2014). An Introduction to Statistical Learning: With Applications in R. Springer Publishing Company, Incorporated.
+
+R: Geographically Weighted Random Forest. (2019). R-Project.org. https://search.r-project.org/CRAN/refmans/SpatialML/html/grf.html
+
+R Spatial. (2019). Spatial autocorrelation —. Rspatial.org. https://rspatial.org/analysis/3-spauto.html
+
+
+
+
