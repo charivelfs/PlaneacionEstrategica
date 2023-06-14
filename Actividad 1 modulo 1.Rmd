@@ -1,0 +1,395 @@
+---
+title: "Actividad 1"
+author: "Charivel Fermin"
+date: "2023-04-11"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#Librarias
+library(dplyr)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(foreign)
+library(ggplot2)
+library(dplyr)
+library(regclass)
+library(mctest)
+library(lmtest)
+library(spdep)
+library(sf)
+library(spData)
+library(mapview)
+library(spatialreg)
+library(naniar)
+library(caret)
+library(e1071)
+library(SparseM)
+library(Metrics)
+library(randomForest)
+library(rpart.plot)
+library(knitr)
+library(insight)
+library(rgeoda)
+library(rgeos)
+library(jtools)
+library(xgboost)
+library(DiagrammeR)
+library(effects)
+library(randomForest)
+library(caret)
+library(tigris)
+library(maptools)
+library(Metrics)
+library(insight)
+library(dlookr)
+```
+
+# Situación problema
+De acuerdo a la Cámara Nacional de la Industria Farmacéutica, (CANIFARMA) en México las personas en situación de pobreza se caracterizan por tener una probabilidad 5 veces mayor de fallecer por COVID-19 que las personas con relativamente mayor nivel de ingresos (Arceo-Gómez, et al., 2021). Además de la falta de acceso a servicios de salud y posibles cormobilidades, otro factor relevante en incrementar dicha probabililidad es el perfil socioeconómico (Arceo-Gómez, et al., 2021).
+
+A partir de la pandemia por COVI19, la firma de consultoría XYZ (México) establece que “Las organizaciones que su principal actividad de negocios es brindar servicios de salud requiren soluciones específicas e innovadoras, para aprovechar oportunidades, afrontar retos, así como favorecer su consolidación y crecimiento”. Algunos de los servicios enfocados por parte de la firma es detectar las necesidades y potencial del crecimiento del sector salud a partir de Analítica de Datos.
+
+# Descripción de la actividad
+1. ¿Qué es un ESDA y cuál es su principal propósito en el proceso de analítica de datos? Es un análisis espacial exploratorio, esta sería la traducción al español, y su propósito es entender mejor la distribución espacial de los datos, es decir como estos actuan diferente cuando tenemos en cuenta su atributo geografico.
+
+2. ¿Qué es autocorrelación espacial? Busca entender a nivel geografico cuando un objeto o característica es similar a su vecino o a otro objeto cercano y en que magnitud. Por ejemplo si vemos una concentración de árboles en zonas vecinas y a su vez mientras más lejos del punto de referencia nos vayamos hay menos árboles existe una autocorrelación espacial positiva. 
+
+
+```{r include=FALSE}
+#carga de la base de datos
+covid = read.csv('~/Downloads/spda_covid19/covid19_confirmados.csv')
+hosp = read.csv('~/Downloads/spda_covid19/denue_hospitales.csv')
+```
+Se empieza por importar las tablas necesarias, en este caso, una con datos de covid con información de los casos de covid y datos socioeconomicos, y por otro lado tenemos otro tabla con información de los hospitales. 
+
+# Limpieza de datos
+## Base de datos Covid
+
+```{r}
+#Confirmar el tipo de datos
+typeof(covid$popden2020)
+typeof(covid$crimen_2019)
+typeof(covid$inclusion_fin_2019)
+typeof(covid$porcentaje_pob_pobreza)
+typeof(covid$porcentaje_pob_pobreza_ext)
+typeof(covid$porcentaje_pob_acceso_ss)
+typeof(covid$pob_6.14_no_edu)
+typeof(covid$porcentaje_pob_servicios_salud)
+```
+
+La tabla de covid cuenta con datos como índices y como porcentajes, que naturalmente son numéricos, pero se están reconociendo como tipo carácter, por lo cual se realiza una transformación de los datos. 
+
+```{r warning=FALSE}
+#Transformación de tipo de dato
+covid$popden2020 = as.double(covid$popden2020)
+covid$crimen_2019 = as.double(covid$crimen_2019)
+covid$inclusion_fin_2019 = as.double(covid$inclusion_fin_2019)
+covid$porcentaje_pob_pobreza = as.double(covid$porcentaje_pob_pobreza)
+covid$porcentaje_pob_pobreza_ext = as.double(covid$porcentaje_pob_pobreza_ext)
+covid$porcentaje_pob_acceso_ss = as.double(covid$porcentaje_pob_acceso_ss)
+covid$porcentaje_pob_servicios_salud = as.double(covid$porcentaje_pob_servicios_salud)
+```
+
+Con el fin de predecir el comportamiento del covid en diferentes localidades se hace una nueva columna que sume el total de casos para los diferentes meses del año 2020. De igual forma dado que cada la cantidad de habitantes difiere según la localidad se buscará hacer una tasa por cada 10,000 con el fin de reducir el sesgo. 
+
+```{r}
+#Creación de una nueva columna con el total de casos de Covid del 2020 por cada 10,000 habitantes
+covid$total_casos <- rowSums(covid[,c("feb_2020", "march_2020", "april_2020", "may_2020", "june_2020", "july_2020", "august_2020", "sept_2020", "oct_2020", "nov_2020", "dic_2020")], na.rm=TRUE)
+covid$tasa_covid = (covid$total_casos/covid$poblacion_2022)*10000
+```
+
+Siendo que algunas columnas están en porcentaje, y se busca que sea representativos, para evitar confusiones y sesgos se pasaran a tipo decimal
+
+```{r}
+#Transformación a porcentaje de las variables correspondientes
+covid$porcentaje_pob_acceso_ss = covid$porcentaje_pob_acceso_ss / 100
+covid$porcentaje_pob_pobreza = covid$porcentaje_pob_pobreza / 100
+covid$porcentaje_pob_pobreza_ext = covid$porcentaje_pob_pobreza_ext /100
+covid$porcentaje_pob_servicios_salud = covid$porcentaje_pob_servicios_salud / 100
+```
+
+Con el fin de conservar sólo variables significativas, se aplica un modelo de regresión no espacial
+
+```{r}
+#Creación de modelo de regresión no espacial
+model = lm(tasa_covid ~ popden2020 + crimen_2019 + inclusion_fin_2019 + porcentaje_pob_pobreza + porcentaje_pob_pobreza_ext + porcentaje_pob_acceso_ss + pob_6.14_no_edu + porcentaje_pob_servicios_salud, data = covid)
+summary(model)
+```
+Se crea un nuevo data set que incluye únicamente aquellas variables que se reconozcan como significativas. En su mayoría estas variables salieron significativas, por lo que lo interesante de analizar en este caso es cuales tienen mayor impacto. Cabe recalcar que los números estimados son tan bajos porque se está usando una tasa y porcentajes.
+
+1. **popden2020**: se espera que exista un aumento del 8.602e-03 en la tasa de covid por cada unidad extra en la densidad de población, estos números son pequeños por lo que se explicó anteriormente, más se puede hacer una comparación relativa al resto de variables. La población afecta de manera positiva a la tasa de covid. Siendo el covid una enfermedad contagiosa, tiene sentido que a mayor cantidad de personas existan más infectados. 
+2. **crime**: no se considera significativa.
+3. **inclusion_fin_2019**: es significativa, más su magnitud de afectación es mínima comparada con el resto de variables, es positiva.
+4. **porcentaje_pob_pobreza**: en general es la variable con mayor afección y es negativa, siendo que localidades con mayor porcentaje de pobreza tienen menores tasas de covid, esto se podría deber a que las personas de bajo nivel socioeconómico sean más propensas a no realizarse pruebas de covid y por lo tanto no ser contabilizadas como infectados.
+5. **porcentaje_pob_pobreza_ext**: afecta de manera positiva la tasa de covid y. dentro de las variables significativas fue la de menor significaciancia.
+6.**porcentaje_pob_acceso_ss**: porcentaje de la población que carece de servicios de seguridad social durante el año 2020, similar a al porcentaje de pobreza, este afecta negativamente y se puede dber igual a la falta de pruebas en esta población.
+7. **pob_6.14_no_edu**: esta variable afecta significativamente pero tiene muy bajo impacto.
+8. **porcentaje_pob_servicios_salud**: no se muestra significativa.
+
+
+Se hace la creación de un nuevo data set con las variables que presentaron significancia en el modelo de regresión lineal. Esto a fin de manipular de manera más sencilla la información. De igual forma se deja la columna de clave de entidad para posteriormente hacer la conexión la base de datos de hospitales. 
+
+```{r}
+#Creación de nuevo dataset con variables significactivas
+covid1 = covid[, c("tasa_covid", "cve_ent", "inclusion_fin_2019", "popden2020", "porcentaje_pob_pobreza_ext", "porcentaje_pob_pobreza", "porcentaje_pob_acceso_ss", "pob_6.14_no_edu")]
+```
+
+## Base de datos Hospitales
+
+Se hace un filtrado para eliminar los registros de aquellos centros especializados como guarderías y asilos, pues su relevancia para la estimación de casos de covid es insignificante.
+
+```{r}
+#Filtrado por nombre_act para conservar solo unidades de salud
+hosp1 <- hosp %>%
+  filter(nombre_act != "Asilos y otras residencias del sector privado para el cuidado de ancianos",
+         nombre_act != "Agrupaciones de autoayuda para alcohólicos y personas con otras adicciones",
+         nombre_act != "Orfanatos y otras residencias de asistencia social del sector privado",
+         nombre_act != "Orfanatos y otras residencias de asistencia social del sector público",
+         nombre_act != "Refugios temporales comunitarios del sector privado",
+         nombre_act != "Consultorios del sector privado de audiología y de terapia ocupacional, física y del lenguaje",
+         nombre_act != "Servicios de orientación y trabajo social para la niñez y la juventud prestados por el sector público",
+         nombre_act != "Servicios de orientación y trabajo social para la niñez y la juventud prestados por el sector privado",
+         nombre_act != "Servicios de capacitación para el trabajo prestados por el sector privado para personas desempleadas, subempleadas o discapacitadas",
+         nombre_act != "Guarderías del sector privado",
+         nombre_act != "Guarderías del sector público",
+         nombre_act != "Centros del sector público dedicados a la atención y cuidado diurno de ancianos y discapacitados",
+         nombre_act != "Otros servicios de orientación y trabajo social prestados por el sector público",
+         nombre_act != "Refugios temporales comunitarios del sector público",
+         nombre_act != "Servicios de capacitación para el trabajo prestados por el sector público para personas desempleadas, subempleadas o discapacitadas",
+         nombre_act != "Residencias del sector privado para el cuidado de personas con problemas de trastorno mental y adicción",
+         nombre_act != "Centros del sector privado de atención médica externa para enfermos mentales y adictos",
+         nombre_act != "Consultorios del sector público de audiología y de terapia ocupacional, física y del lenguaje",
+         nombre_act != "Centros del sector público de atención médica externa para enfermos mentales y adictos",
+         nombre_act != "Centros de planificación familiar del sector privado",
+         nombre_act != "Asilos y otras residencias del sector público para el cuidado de ancianos",
+         nombre_act != "Centros del sector privado dedicados a la atención y cuidado diurno de ancianos y discapacitados",
+         nombre_act != "Residencias del sector público para el cuidado de personas con problemas de trastorno mental y adicción",
+         nombre_act != "Centros de planificación familiar del sector público",
+         nombre_act != "Consultorios de quiropráctica del sector público",
+         nombre_act !=  "Consultorios de optometría")
+```
+
+Se hace una clave única con los datos de clave de municipio y entidad, esto para que coincida con los registros del data set de Covid, esto con el fin de luego unirlas. Aquí estamos creando una nueva variable en la base de hosp1, la cual nos dará la misma *clave de entidad* que la de la base de datos de covid, para esto estamos multiplicando la clave entidad por 1000 y sumamos la clave municipio, pues es la nomenclatura que tiene la base de datos de covid con la cual planeamos hacer una unión posteriormente.
+
+```{r}
+#Creación de clave única
+hosp1$cve_ent1 = (hosp1$cve_ent * 1000) + hosp1$cve_mun
+hosp1$cve_ent1 = as.character(hosp1$cve_ent1)
+```
+
+Conservamos solo aquellas variables que se consideren relavantes para el análisis planteado.
+
+```{r}
+#Conservamos solo las columnas necesarias
+hosp1 = hosp1[,c("cve_ent1", "municipio", "entidad")]
+#muestra del nuevo dataset
+head(hosp1)
+```
+
+```{r}
+#Filtro de agrupación para el conteo de hospitales por municipio
+df = hosp1 %>%
+  group_by(cve_ent1, entidad) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+colnames(df)[colnames(df)=="n"] = "cant_hosp"
+df
+```
+
+## Unión de las bases de datos
+
+Una vez limpiados ambos datasets se hace una unión de ellos para tener toda la información en una sola tabla, ahora se puede saber por municipio la cantidad de hospitales, la tasa de covid y diversos factores socioeconómicos. 
+
+```{r}
+#Unión de la base de datos de Covid con la base de datos con información de hospitales por municipio
+df2 <- merge(covid1, df, by.x = "cve_ent", by.y = "cve_ent1", all.x = TRUE)
+```
+
+```{r}
+#División de base de datos entre las diferentes regiones
+Norte = df2[df2$entidad %in% c("Baja California", "Chihuahua", "Coahuila", "Nuevo Le?n", "Sonora", "Tamaulipas"), ]
+CentroNorte = df2[df2$entidad %in% c("Aguascalientes", "Baja California Sur", "Colima", "Durango", "Jalisco","Michoac?n", "Nayarit", "San Luis Potos?", "Sinaloa", "Zacatecas"), ]
+Centro = df2[df2$entidad %in% c("Ciudad de M?xico", "Estado de M?xico", "Guanajuato", "Hidalgo", "Morelos", "Puebla", "Quer?taro", "Tlaxcala"), ]
+Sur = df2[df2$entidad %in% c("Campeche", "Chiapas", "Guerrero", "Oaxaca", "Quintana Roo", "Tabasco", "Veracruz", "Yucat?n"), ]
+```
+
+# ESDA
+## Estadístico descriptivo
+
+Fijándonos exclusivamente en la tasa de covid por región vemos que el norte es la región con mayor tasa promedio, y el sur la que menor tiene, esto tiene sentido si tomamos en cuenta que el norte tiene los diferentes factores que ya concluimos aportan a una alta tasa, bajos niveles de pobreza, inclusión financiera y aunque tienen la menor población, mientras en el Sur tiene una población mediana, baja inclusión financiera y altos porcentaje de pobreza.
+
+```{r}
+# Calcular los promedios por región
+promedios_region <- data.frame(
+  Region = c("Norte", "CentroNorte", "Centro", "Sur"),
+  PromedioTasaCovid = c(mean(Norte$tasa_covid), mean(CentroNorte$tasa_covid), mean(Centro$tasa_covid), mean(Sur$tasa_covid)),
+  PromedioPobreza = c(mean(Norte$porcentaje_pob_pobreza), mean(CentroNorte$porcentaje_pob_pobreza), mean(Centro$porcentaje_pob_pobreza, na.rm = TRUE), mean(Sur$porcentaje_pob_pobreza)),
+  PromedioFinanzas = c(mean(Norte$inclusion_fin_2019), mean(CentroNorte$inclusion_fin_2019), mean(Centro$inclusion_fin_2019), mean(Sur$inclusion_fin_2019)),
+  PromedioPoblacion = c(mean(Norte$popden2020), mean(CentroNorte$popden2020), mean(Centro$popden2020), mean(Sur$popden2020, na.rm = TRUE))
+)
+
+# Mostrar la tabla de promedios por región
+print(promedios_region)
+```
+
+Para propósitos de este ejercicio nos concentramos específicamente en la región norte y en estadísticos globales
+```{r}
+#Resumen estadístico de la base de datos final
+summary(df2)
+summary(Norte)
+```
+
+
+```{r}
+#Histogramas globales
+plot_normality(df2, tasa_covid, inclusion_fin_2019, popden2020, porcentaje_pob_pobreza_ext, porcentaje_pob_pobreza, porcentaje_pob_acceso_ss, pob_6.14_no_edu, cant_hosp)
+```
+
+Podemos ver como para la mayoría de variables existen sesgos a la izquierda o la derecha, por lo que antes de realizar cualquier otro análisis sería bueno hacer una conversión cuadrática o logarítmica según convenga.
+
+
+```{r}
+#Histogramas regional
+plot_normality(Norte, tasa_covid, inclusion_fin_2019, popden2020, porcentaje_pob_pobreza_ext, porcentaje_pob_pobreza, porcentaje_pob_acceso_ss, pob_6.14_no_edu, cant_hosp)
+```
+
+En general también se muestran las variables con sesgos, la diferencia sería en la magnitud de la frecuencia. Por ejemplo vemos que en el Norte existe un mayor sesgo a la derecha en los porcentajes de pobreza lo cual tiene sentido con las explicaciones anteriores. 
+
+## Estadístico de Dispersión
+```{r}
+# boxplot global
+boxplot(df2$tasa_covid)
+boxplot(df2$cant_hosp)
+boxplot(df2$inclusion_fin_2019)
+boxplot(df2$popden2020)
+boxplot(df2$porcentaje_pob_pobreza)
+```
+
+Representado en un boxplot se puede observar de una forma muy clara por la cantidad de outliers que los datos están muy dispersos para la tasa de covid, cantidad de hospitales, inclusión financiera y población. Mientras que el porcentaje de pobreza se muestra sin outliers. Todas estas especificaciones tienen sentido según los histogramas previamente analizados. 
+
+```{r}
+# boxplot local
+boxplot(Norte$tasa_covid)
+boxplot(Norte$cant_hosp)
+boxplot(Norte$inclusion_fin_2019)
+boxplot(Norte$popden2020)
+boxplot(Norte$porcentaje_pob_pobreza)
+```
+
+Una vez filtrando por región se disminuye considerablemente la cantidad de outliers, lo que puede indicar en primera instancia que el comportamiento por región es similar entre estados.  
+
+# Visualización de Mapas
+
+Importamos un data set georeferenciado (sf) para hacer la unión por municiipo, y así crear mapas
+```{r warning=FALSE}
+#Carga de data set para creación de mapas - sf
+mapasf = read_sf("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp")
+#Unión de datas geo com la base de datos principal
+mapasf = geo_join(mapasf, df2, 'IDUNICO','cve_ent', how = 'inner')
+```
+
+Importamos un data set georeferenciado (shape poly) para hacer la unión por municiipo, y así crear mapas
+```{r warning=FALSE}
+#Carga de data set para creación de mapas - polygon shapefile
+maparsp <-readShapePoly("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp",IDvar="IDUNICO",proj4string=CRS("+proj=longlat")) 
+#Unión de datas geo com la base de datos principal
+maparsp = geo_join(maparsp, df2, 'IDUNICO','cve_ent', how = 'inner')
+```
+
+```{r}
+prueba = ggplot(data=mapasf) + geom_sf(aes(fill=tasa_covid)) + scale_fill_continuous(low = "#fff7ec", high="#7f0000")
+prueba
+```
+
+
+```{r}
+#Por propositos de carga se omitirá este paso, esre mapa permite interactuar con el
+# Mapa Interactivo
+#mapview(mapasf, zcol="tasa_covid")
+```
+
+# Autocorrelacion Espacial
+## Matrices de conectividad
+```{r}
+#Cálculo de centroides
+centroid = coordinates(maparsp)
+names(centroid) = c("lon","lat")
+map.centroid = coordinates(maparsp)
+summary(map.centroid)
+```
+
+```{r warning=FALSE}
+map.link = poly2nb(maparsp, queen=T)
+map.linkW = nb2listw(map.link, style = "W")
+plot(maparsp, border = "black", axes = FALSE, las=1)
+plot(map.linkW,coords=map.centroid,pch=19,cex=0.1,col="red",add=T)  ### plot SWM queen standarized 
+title("Spatial Connectivity Matrix - Contiguity Case (Queen)")
+
+```
+
+```{r warning=FALSE}
+#Identificación de Autocorrelacion GLOBAL
+moran.mc(maparsp$tasa_covid,map.linkW,nsim=9999)# Positive Spatial Autocorrelation and Statistically Significant.  
+```
+Podemos observar que existe una autocorrelación espacial positiva estadísticamente significativa.
+
+```{r warning=FALSE}
+mapast = st_read("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp")
+mapast = geo_join(mapast, df2, 'IDUNICO','cve_ent', how = 'inner')
+queen_w = queen_weights(mapast)
+```
+
+```{r}
+#Identificación de Autocorrelacion LOCAL
+lisa_tasacovid<-local_moran(queen_w, mapast["tasa_covid"])
+moran.mc(mapast$tasa_covid,map.linkW,nsim=9999) # Positive Spatial Autocorrelation and Statistically Significant.   
+```
+
+Se observa una correlación espacial positiva
+
+## Clusterización
+```{r}
+mapast$cluster = as.factor(lisa_tasacovid$GetClusterIndicators())
+levels(mapast$cluster) = lisa_tasacovid$GetLabels()
+```
+
+```{r}
+ggplot(data=mapast) + 
+  geom_sf(aes(fill=cluster)) + 
+  ggtitle(label="Tasa de Covid")
+```
+En el mapa podemos ver como para la tasa de covid la mayoría de los municipios no tiene significacia en los cluster. Aquellos casos que presentan relación alta y positiva es en el norte del país. 
+
+# Preguntas de análisis
+**1. ¿Cuáles son las regiones en México que representan una oportunidad de crecimiento y/o expansión de organizaciones relacionadas con el acceso a servicios de salud?**
+
+```{r}
+summary(CentroNorte$cant_hosp)
+summary(Centro$cant_hosp)
+summary(Norte$cant_hosp)
+summary(Sur$cant_hosp)
+```
+El Sur es la región con menos cantidad de hospitales.
+
+**2. ¿Cuáles son las características socioeconómicas de la población de dichas regiones?**
+```{r}
+summary(df2)
+summary(Sur)
+```
+
+Al hacer una comparación con los datos globales en promedio el sur tiene menor inclusión financiera, un mayor porcentje de pobreza extrema, pero presentan un mayor porcentaje de con acceso a servicios de seguridad social y menor población sin educación de los 6-14. Entonces aunque existan menos hospitales no es alarmante al tener en cuenta que es menos territorio y menos población que en otras regiones.
+
+**3.¿Porqué sí / no existen condiciones en dichas regiones para el crecimiento y/o expansión de organizaciones relacionadas con el acceso a servicios de salud?**
+Podemos observar que en el Sur existe un buen porcentaje con acceso a servicios de seguridad social, lo que sería un buen inicio para la infraestructura necesaria para crecer. Más cabe destacar que el sur es la región que en general menos capacidad tienen sus habitantes de solicitar servicios de salud privada, por la inclusión financiera, la baja educación y los porcentajes de pobreza, por lo que es necesario apoyo públicos para que esto se vuelva accesible. De igual forma, siendo que hay tan pocos hospitales en el sur se abre la posibilidad de una alta expansión debido a la disparidad que hay de oferta y demanda.
+
+
+# Referencias
+Arceo-Gómez, Eva O.; Campos-Vazquez, Raymundo M.; Esquivel, Gerardo; Alcaraz, Eduardo; Martinez, Luis A.; y Lopez, Norma G. (2022). The Income Gradient in COVID-19 Mortality and Hospitalisation: An Observational Study with Social Security Administrative Records in Mexico. The Lancet Regional Health – Americas, 6. Fuente: https://www.sciencedirect.com/science/article/pii/S2667193X21001113?via%3Dihub 
+
+
+
