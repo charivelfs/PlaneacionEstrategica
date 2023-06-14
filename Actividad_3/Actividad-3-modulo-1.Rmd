@@ -1,0 +1,309 @@
+---
+title: "Actividad 3"
+author: "Charivel Fermin, Angela de la Garza, Erick de la Cruz, Milena Puga, Daniel Quintanilla"
+date: "2023-04-27"
+output: html_document
+---
+
+# Situacion problema
+
+De acuerdo a la Camara Nacional de la Industria Farmaceutica, (CANIFARMA) en Mexico las personas en situacion de pobreza se caracterizan por tener una probabilidad 5 veces mayor de fallecer por COVID-19 que las personas con relativamente mayor nivel de ingresos (Arceo- Gomez, et al., 2021)2. Ademas de la falta de acceso a servicios de salud y posibles cormobilidades, otro factor relevante en incrementar dicha probabililidad es el perfil socioeconomico (Arceo-Gomez, et al., 2021). A partir de la pandemia por COVI19, la firma de consultoria XYZ (Mexico) establece que "Las organizaciones que su principal actividad de negocios es brindar servicios de salud requiren soluciones especificas e innovadoras, para aprovechar oportunidades, afrontar retos, asi como favorecer su consolidacion y crecimiento". Algunos de los servicios enfocados por parte de la firma es detectar las necesidades y potencial del crecimiento del sector salud a partir de Analitica de Datos.
+
+# Definiciones
+
+***Describir 3-5 diferencias entre la estimacion de modelo de regresion global y la estimacion del metodo de Geographic Weighted Regression (GWR).***
+  
+1. En el modelo de regresion global, se usa una sola formula para predecir como una variable afecta a otra en toda el area de estudio. En GWR, en cambio, se utilizan diferentes formulas para cada punto de la region, porque la relacion entre las variables puede ser diferente en distintos lugares.
+
+2. La estimacion del modelo de regresion global no considera que la relacion entre las variables pueda variar segun la ubicacion geografica. En cambio, GWR toma en cuenta que la relacion puede cambiar segun la posicion de los puntos.
+
+3. El modelo de regresion global no distingue entre las diferencias en las variables entre los puntos. En GWR, se pueden tener diferentes valores para las variables en distintos lugares, y esto se toma en cuenta para hacer la estimacion.
+
+4. La estimacion del modelo de regresion global es mas facil de hacer y de entender, porque solo se usa una formula para toda el area de estudio. GWR es un poco mas complicado porque se necesitan hacer calculos diferentes para cada punto, pero esto nos da una mejor idea de como las variables estan relacionadas en distintas partes del mapa.
+
+
+# Carga de base de datos y librerias
+```{r warning=FALSE, include=FALSE}
+## Cargar las librerias
+library(sf)
+library(tmap)
+library(spdep)
+library(rgdal)
+library(tidyverse)
+library(tigris)
+library(mapview)
+library(GWmodel)    
+library(regclass)
+library(viridis)
+library(grid)
+library(spgwr)
+
+
+## Importar base de datos
+## La base de datos fue previamente limpiada e integrada en las actividades 1 y 2
+## La base de datos fue previamente limpiada e integrada en las actividades 1 y 2
+mx_shp <- readOGR("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp") 
+covid_data <- read_csv('~/Downloads/df2.csv') ### non-spatial data
+df2 <- read_csv('~/Downloads/df2.csv') ### non-spatial data
+mx_geo_data <- geo_join(mx_shp, covid_data, 'IDUNICO','cve_ent', how = 'inner') ### Combining geospatial and non-spatial data
+```
+
+
+Importamos un data set georeferenciado (shape poly) para hacer la unión por municiipo, y así crear mapas
+```{r warning=FALSE}
+#Carga de data set para creación de mapas - polygon shapefile
+maparsp <-readShapePoly("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp",IDvar="IDUNICO",proj4string=CRS("+proj=longlat")) 
+#Unión de datas geo com la base de datos principal
+maparsp = geo_join(maparsp, df2, 'IDUNICO','cve_ent', how = 'inner')
+```
+
+
+# Matrices de conectividad
+
+## Queen
+```{r}
+swm_queen <- poly2nb(mx_geo_data, queen = TRUE)
+summary(swm_queen)
+```
+Existen 2456 municipios en total en Mexico de los cuales en promedio tienen 5 conexiones mientras el area de unidad con mas conexiones contiene 22 vecinos y el que menos conexiones tiene solamente 1 vecino
+
+
+```{r warning=FALSE}
+### visualizacion grafica
+plot(mx_shp, borders = 'lightgrey') 
+plot(swm_queen, coordinates(mx_shp), pch = 19, cex = 0.6, add = TRUE, col = "red")
+title(main = "Queen Contiguity", cex.main = 0.9)
+```
+
+## Rook
+
+```{r}
+swm_rook <- poly2nb(mx_geo_data, queen = FALSE)
+summary(swm_rook)
+```
+Existen 2456 municipios en total en Mexico de los cuales en promedio tienen 6 conexiones mientras el area de unidad con mas conexiones contiene 22 vecinos y el que menos conexiones tiene solamente 1 vecino
+
+
+```{r warning=FALSE}
+plot(mx_shp, borders = 'lightgrey') 
+plot(swm_rook, coordinates(mx_shp), pch = 19, cex = 0.6, add = TRUE, col = "red")
+title(main = "Rook Contiguity", cex.main = 0.9)
+```
+
+
+## k nearest neighbor 
+```{r}
+### computing distance based neighbours
+coords <- coordinates(mx_shp)
+head(coords)
+
+knn1 <- knn2nb(knearneigh(coords))
+knn1_dist <- unlist(nbdists(knn1, coords, longlat = TRUE))
+summary(knn1_dist)
+
+dwm <- dnearneigh(coords, 0 ,98, longlat = TRUE)
+dwm # On average, each county is nearest in distance to another 10 point areas?
+```
+En promedio la cantidad conexiones es de 122 conexiones por area de unidad utilizando el metodo de k nearest neighbor, el cual nos da un promedio de conexion mas alto que los dos anteriores, sin embargo este nos ha dejado municipios sin ninguna conexion.
+
+```{r warning=FALSE}
+plot(mx_shp, border = "lightgrey")
+plot(dwm, coords, add = TRUE, pch = 19, cex = 0.6)
+
+rswm_queen <- nb2listw(swm_queen, style = "W", zero.policy = TRUE)
+rswm_queen
+```
+Viendo las matrices de conectividad nos pudimos percatar que la mas eficaz fue la de contiguedad (queen y rook), esto debido a que nos ayudo a conectar los municipios lo que hace sentido a comparacion de la otra matriz, porque aunque tengan solo una conexion, es algo que si es real, ya que las que tenian solamente una conexion eran municipios de las Bajas Californias al noroeste de Mexico, lo cual al estar en una peninsula aparte y su distribucion geografica es de pila, hace coherenica que solo puedan tener una conexion en el extremo y no ninguna.
+
+
+# ESDA
+```{r}
+# Mapa Interactivo
+qtm(mx_geo_data, zcol="tasa_covid")
+```
+Como se puede observar en el mapa de la Republica Mexicana, la tasa de covid tiene una distribucion coherente que es acorde a la actividad economica y urbanizacion del municipio, porque podemos ver una gran tasa de covid en municipios de grandes ciudades como Ciudad de Mexico y sus alrededores,capitales de estados como se puede ver en el norte en Monterrey y en Guadalajara y en zonas de alto turismo como lo es en la ciudad de Merida, donde la afluencia de gente es mayor por ser paradero mundial para turistas. Pero analizando esta informacion, veremos la distribucion de los datos utilizando herramientas como histogramas y box plots para ver la distribucion de los datos y asi poder tomar decisiones sobre los datos para poder realizar modelos de regresion mas adelante.
+
+## Histogramas
+```{r}
+hist(covid_data$tasa_covid)
+```
+
+```{r}
+hist(covid_data$popden2020)
+```
+
+```{r}
+hist(covid_data$porcentaje_pob_pobreza_ext)
+```
+
+```{r}
+hist(covid_data$porcentaje_pob_acceso_ss)
+```
+Como podemos observar nuestra variable popden2020 esta orientada hacia el lado izquierdo de la grafica por lo que por esta razon para hacer un analisis certero, utilizaremos la funcion logaritmica para cambiar la distribucion de los datos.
+
+## ESDA en Mapa
+```{r}
+qtm(mx_geo_data, fill = "porcentaje_pob_acceso_ss", fill.title = "Porcentaje de la Poblacion que carece a Seguridad Seguridad durante el anio 2020")
+```
+
+```{r}
+qtm(mx_geo_data, fill = "inclusion_fin_2019", fill.title = "Porcentaje de la poblacion que tiene acceso a servicios de banca comercial durante el anio de 2019")
+```
+
+```{r}
+qtm(mx_geo_data, fill = "cant_hosp", fill.title = "Cantidad de Hospitales")
+```
+
+```{r}
+qtm(mapasf, fill = "porcentaje_pob_pobreza_ext", fill.title = "Porcentaje de la poblacion en situacion de pobreza extrema (2020)")
+```
+
+```{r}
+qtm(mapasf, fill = "pob_6.14_no_edu", fill.title = "Porcentaje de la poblacion entre 6 y 14 anios de edad que carece de acceso a educaccion")
+```
+# Modelo de regresion global (no espacial)
+```{r}
+model = lm(tasa_covid ~ inclusion_fin_2019 + log(popden2020)+porcentaje_pob_pobreza_ext+porcentaje_pob_acceso_ss+pob_6.14_no_edu+cant_hosp, data = covid_data)
+summary(model) 
+```
+
+```{r}
+VIF(model)
+```
+Una vez hecho nuestro modelo de regresion no espacial el cual es un modelo lineal, pudimos observar que todas las variables son estadisticamente significativas, excepto por la variable de poblacion sin educacion, ademas de esto obtuvimos que el VIF de las variables es mayor solo alto en el porcentaje de poblacion con acceso a Servicios de Salud, lo cual muestra una falta de multicolinearidad en nuestros datos.
+
+```{r}
+map.link = poly2nb(maparsp, queen=T)
+map.linkW = nb2listw(map.link, style = "W")
+```
+
+
+```{r warning=FALSE}
+#Identificación de Autocorrelacion GLOBAL
+moran.mc(maparsp$tasa_covid,map.linkW,nsim=9999)# Positive Spatial Autocorrelation and Statistically Significant.  
+```
+
+# Modelo de regresion GWR
+
+Antes de realizar el modelo de regresion geograficamente ponderado (GWR), hay que observar las tendencias y caracteristicas de la base de datos georeferenciada.
+```{r}
+summary(mx_geo_data)
+```
+  
+Para poder ser utilizados en el analisis, se imputan los valores que equivalen a 0 con 0.01 y los valores nulos con la media. Esto se debe a que el modelo GWR necesita una ponderacion, aunque sea minima, para todas las variables.
+```{r}
+mx_geo_data$pob_6.14_no_edu[mx_geo_data$pob_6.14_no_edu ==0] <- 0.01
+mx_geo_data$porcentaje_pob_pobreza_ext[mx_geo_data$porcentaje_pob_pobreza_ext ==0] <- 0.01
+mx_geo_data$inclusion_fin_2019[mx_geo_data$inclusion_fin_2019 ==0] <- 0.01
+mx_geo_data$tasa_covid[mx_geo_data$tasa_covid ==0] <- 0.01
+
+mean_cant_hosp <- mean(mx_geo_data$cant_hosp, na.rm = TRUE)
+mx_geo_data[is.na(mx_geo_data$cant_hosp), "cant_hosp"] <- mean_cant_hosp
+
+mean_ppe <- mean(mx_geo_data$porcentaje_pob_pobreza_ext, na.rm = TRUE)
+mx_geo_data[is.na(mx_geo_data$porcentaje_pob_pobreza_ext), "porcentaje_pob_pobreza_ext"] <- mean_ppe
+
+mean_pass <- mean(mx_geo_data$porcentaje_pob_acceso_ss, na.rm = TRUE)
+mx_geo_data[is.na(mx_geo_data$porcentaje_pob_acceso_ss), "porcentaje_pob_acceso_ss"] <- mean_pass
+```
+
+Ahora, verificamos que los cambios se hayan realizado los cambios en la base de datos.
+```{r}
+summary(mx_geo_data)
+```
+  
+Una vez que no tenemos valores 0 o nulos, podemos introducir las variables al modelo GWR para realizar la regresion. Este primer chunk consistira en un modelo adaptivo.
+```{r}
+bw1 <- bw.gwr(log(tasa_covid) ~ inclusion_fin_2019 + log(popden2020)+porcentaje_pob_pobreza_ext+porcentaje_pob_acceso_ss+pob_6.14_no_edu+cant_hosp, approach = "AIC", adaptive = T, data=mx_geo_data) 
+```
+  
+Ahora, este segundo modelo consistira en ser no adaptivo.
+```{r}
+bw2 <- bw.gwr(tasa_covid ~ inclusion_fin_2019 + log(popden2020)+porcentaje_pob_pobreza_ext+porcentaje_pob_acceso_ss+pob_6.14_no_edu+cant_hosp, approach = "AIC", adaptive = F, data=mx_geo_data) 
+```
+  
+El modelo adaptivo, como podria esperarse, resulto tener un AIC mas bajo que el no adaptivo, por lo que se utilizara este para realizar el fit a los datos.
+```{r}
+# fit the GWR model
+m.gwr1 <- gwr.basic(log(tasa_covid) ~ inclusion_fin_2019 + log(popden2020)+porcentaje_pob_pobreza_ext+porcentaje_pob_acceso_ss+pob_6.14_no_edu+cant_hosp, adaptive = T, data = mx_geo_data, bw = bw1)  
+m.gwr1
+```
+
+
+Una vez que tenemos el modelo ajustado y con menor AIC, este puede ser mapeado a la geometria del mapa.
+```{r}
+# Mapping GWR outputs
+gwr_sf = st_as_sf(m.gwr1$SDF)
+gwr_sf
+```
+
+Una vez que ya contamos con el modelo lineal y el GWR, el siguiente paso es elegir el que se ajusta mejor a los datos, con un AIC menor, para poder realizar el analisis y visualizarlo.
+    
+# Seleccion de mejor model (AIC) 
+
+Para determinar qué regresion es la mejor para realizar el analisis, se debe elegir el modelo cuyo AIC resulto menor. 
+```{r}
+models = c("No Spatial", "Modelo GWR1", "Modelo GWR2")
+AICs <- c(26057.2, 23286.8, 24629.1)
+results <- data.frame(model = models, AIC = AICs)
+results
+
+```
+  
+El modelo GWR1 obtuvo un AIC de 23286.8, mientras que el otro modelo de regresion geograficamente ponderado (GWR) obtuvo un AIC de 24629.1 y el no espacial de 26057.2. Esto podria explicarse ya que el AIC como metrica suele calificar con mayor severidad a modelos que implementan mas variables en el analisis, lo cual es el caso del GWR y de regresion lineal. En conclusion, el modelo de GWR1 sera elegido.
+  
+# Visualizacion de mapas
+```{r}
+# local prediction of dependent variable  
+gwr_sf$y_predicted <- exp(gwr_sf$yhat)
+qtm(gwr_sf, zcol="y_predicted")
+```
+De acuerdo al modelo seleccionado, la prediccion de la variable dependiente (tasa covid) se encuentra debajo de los 500 casos en la gran mayoria de los municipios del estado como se observa en el mapa, mientras que en zonas costeras, capitales, se puede ver un color mas claro lo cual indica una mayor tasa de covid en estos municipios.
+
+A continuacion haremos un analisis visual de las variables con mayor significancia del modelo la cual fue la de densidad de poblacion y porcentaje de poblacion en pobreza extrema.
+```{r}
+qtm(gwr_sf, "log(popden2020)_TV")
+```
+Podemos observar que en zonas centricas, como la capital del pais la poblacion es mayor a comparacion de todo el pais, mientras que en zonas aridas como lo son el norte de Mexico y zona donde existe mucha reserva natural como el estado de Chiapas, la densidad de poblacion es muy baja debido a la prohibicion de acceso a estas zonas o bien, las condiciones extremas en las que se tendria que vivir en dichas zonas.
+
+```{r}
+# local prediction of statistically significant explanatory variables 
+qtm(gwr_sf,"porcentaje_pob_pobreza_ext")
+```
+Otro factor importante en nuestro pais lamentablemente es el porcentaje de poblacion en condicion de pobreza extrema, en el mapa podemos observar como solo en zonas muy especificas del pais como lo es en su parte mas roja el estado de Oaxaca, es donde esta poblacion se concentra mas, ademas de la zona del norte de Mexico, donde pudimos observar que ademas de ser zona con baja densidad poblacional, tambien son zonas marginadas, esto puede ser debido a las dificultades de acceso y condiciones extreamas en las que se viven, mientras que en el caso de Nuevo Leon, especificamente en su capital, podemos ver igualmente un porcentaje alto, esto porque en Monterrey existe mucho la explotacion laboral y por tendencias americanas y condiciones que viven en el estado ademas de la inflacion, la gente trabaja para sobrevivir y no para vivir.
+
+
+```{r}
+# local prediction of R2
+qtm(gwr_sf, "Local_R2")
+```
+Y analizando el modelo y su valor para este reporte, podemos ver que la R2 local, nos dice que en zonas como frontera noreste y centro norte de mexico tiene una correlacion en los datos significativa mientras que mas al norte y un poco mas al centro nos dicen que son menores.
+
+```{r}
+# local regression residuals 
+qtm(gwr_sf, "residual")
+```
+
+```{r}
+# visualizing more than 2 explanatory variables 
+map_1 <- tm_shape(gwr_sf) +
+  tm_polygons(col = "log(popden2020)", style = "quantile", palette = "BuGn", title = "P-Value de Densidad de Poblacion en 2020")
+map_2 <- tm_shape(gwr_sf) +
+  tm_polygons(col = "porcentaje_pob_pobreza_ext", style = "quantile", palette = "-BuGn", title = "P-Value de Porcentaje de Poblacion en Pobreza Extrema")
+tmap_arrange(map_1, map_2, ncol = 2)
+```
+Al igual que lo hecho anteriormente, utilizamos las mismas variables significativas que los modelos se ajustan mejor al norte del pais y sur del pais en la peninsula, mas que en otros lados de la republica,
+
+# Hallazgos y sugerencias
+Una vez analizando los datos junto al modelo dado podemos encontrar diferentes hallazgos para la expansion de centros de servicio de salud:
+- Como se pudo observar, el area norte del pais fue la mas significativa estadidisticamente, por lo que al analizar los datos, una opcion dee expansion es expanderse al norte del pais en el este en municipios de Coahulia y Nuevo Leon, porque estos estados cuentan con un alto porcentaje de poblacion en pobreza extrema y con la probabilidad de estar lejos de un servicio de salud donde atenderse, por lo que para salvaguardar a estos es de suma importancia expanderse a esta zona.
+- Otras zonas donde se encontro junto con la densidad poblacional y porcentaje de pobreza extrema, es en el estado de Oaxaca, ya que al igual, es estadisticamente significativo y es necesario que este estado cuente con mayor srvicio para satisfacer a una demanda que puede contar con muchos contagios por falta de medidas de salubridad por que no pueden costearlas.
+
+# Referencias
+
+Camara Nacional de la Industria Farmaceutica (CANIFARMA). Fuente:https://codigof.mx/en-mexico-las-personas-pobres-tienen-5-veces-mas-probabilidades-de-fallecer-por-covid-19-que-
+las-de-mayores-ingresos/
+
+Arceo-Gomez, Eva O.; Campos-Vazquez, Raymundo M.; Esquivel, Gerardo; Alcaraz, Eduardo; Martinez, Luis A.; y Lopez, Norma G. (2022). The Income Gradient in COVID-19 Mortality and Hospitalisation:
+An Observational Study with Social Security Administrative Records in Mexico. The Lancet Regional
+Health - Americas, 6. Fuente: https://www.sciencedirect.com/science/article/pii/S2667193X21001113?via%3Dihub
