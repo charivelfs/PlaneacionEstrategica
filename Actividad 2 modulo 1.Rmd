@@ -1,0 +1,171 @@
+---
+title: "Covid Dream Team"
+author: "Angela, Erick, Milena, Charivel, Daniel"
+date: '2023-04-10'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+# Librerias y Carga de Archivos
+```{r include=FALSE}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(foreign)
+library(ggplot2)
+library(dplyr)
+library(regclass)
+library(mctest)
+library(lmtest)
+library(spdep)
+library(sf)
+library(spData)
+library(mapview)
+library(spatialreg)
+library(naniar)
+library(dlookr)
+library(caret)
+library(e1071)
+library(SparseM)
+library(Metrics)
+library(randomForest)
+library(rpart.plot)
+library(knitr)
+library(insight)
+library(rgeoda)
+library(rgeos)
+library(jtools)
+library(xgboost)
+library(DiagrammeR)
+library(effects)
+library(randomForest)
+library(caret)
+library(tigris)
+library(maptools)
+```
+
+```{r}
+#Base de datos creada en actividad 1
+df2 = read.csv('~/Downloads/df2.csv')
+covid1 = read.csv('~/Downloads/spda_covid19/covid1.csv')
+```
+
+```{r}
+mapasf = read_sf("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp")
+mapasf = geo_join(mapasf, df2, 'IDUNICO','cve_ent', how = 'inner')
+```
+
+```{r}
+maparsp <-readShapePoly("~/Downloads/spda_covid19/shp_mx_mpios/mx_mpios.shp",IDvar="IDUNICO",proj4string=CRS("+proj=longlat")) ### reads data from a polygon shapefile.
+maparsp = geo_join(maparsp, df2, 'IDUNICO','cve_ent', how = 'inner')
+maparsp
+```
+
+# Modelos
+## Regresion NO Espacial
+```{r}
+model <- lm(log1p(tasa_covid) ~ log(popden2020) + log1p(inclusion_fin_2019) + porcentaje_pob_pobreza + log1p(porcentaje_pob_pobreza_ext) + log1p(pob_6.14_no_edu) + porcentaje_pob_acceso_ss + cant_hosp, data = df2)
+
+summary(model)
+```
+En este modelo se realizaron transformaciones logaritmicas para evitar el sesgo presentado por varias variables, cabe destacar que en la mayoría se uso una transformación **log1p** dado que contaban con valores muy cercanos a 0, y esto ocasionaba que la función no corriera. Vemos que la mayoría son significativas y que la población e inclusión financiera afectan positivamente en los casos de covid, mientras a mayor pobreza, pobreza extrema y falta de educación se reducen los casos de covid.
+
+
+```{r}
+errorml = sqrt(mean(model$residuals^2))
+errorml
+```
+
+## Modelo de Regresion Espacial
+### Spatial Error Model
+
+```{r}
+map.link = poly2nb(maparsp, queen=T)
+map.linkW = nb2listw(map.link, style = "W")
+```
+
+
+```{r warning=FALSE}
+maparsp1 =  subset(maparsp, select = -entidad)
+spatial_error_model <- errorsarlm(log1p(tasa_covid) ~ log(popden2020) + log1p(inclusion_fin_2019) + porcentaje_pob_pobreza + log1p(porcentaje_pob_pobreza_ext) + log1p(pob_6.14_no_edu) + porcentaje_pob_acceso_ss + cant_hosp, data = maparsp1, map.linkW, method = "Matrix")
+summary(spatial_error_model)
+```
+Este modelo se puede considerar significativo. Aunque la maginitud y la significacia cambiaran es seguro decir que la a mayor población y mayor inclusión financiera mayores tasas de covid, y a mayor pobreza y pobreza extrema menores casos de covid. 
+
+```{r warning=FALSE}
+sqrt(mean((maparsp1$tasa_covid - spatial_error_model$fitted.values)^2))
+```
+
+### Spatial Autorregressive Model
+```{r}
+spatial_lag_model <- lagsarlm(log1p(tasa_covid) ~ log(popden2020) + log1p(inclusion_fin_2019) + porcentaje_pob_pobreza + log1p(porcentaje_pob_pobreza_ext) + log1p(pob_6.14_no_edu) + porcentaje_pob_acceso_ss + cant_hosp, data = maparsp1, map.linkW, method = "Matrix")
+summary(spatial_lag_model)
+```
+Este modelo coincide en la significancia de variables y direcciones, lo que cambia es la manitud de los estimados, siendo este modelo más conservador.
+
+```{r warning=FALSE}
+sqrt(mean((maparsp1$tasa_covid - spatial_lag_model$fitted.values)^2))
+```
+
+## Machine Learning Model Random Forest
+```{r}
+set.seed(27812)
+
+covid1 <- na.omit(covid1)
+
+sample <- sample(c(TRUE, FALSE), nrow(covid1), replace=TRUE, prob=c(0.7,0.3))
+train  <- covid1[sample, ]
+test   <- covid1[!sample, ]
+
+
+random_forest <- randomForest(log1p(tasa_covid) ~ ., data=train, proximity=TRUE)
+print(random_forest) 
+```
+
+```{r}
+rf_prediction_test_data <-predict(random_forest,test)
+
+rmse(rf_prediction_test_data, test$tasa_covid)
+```
+
+```{r}
+varImpPlot(random_forest, n.var = 13, main = "Top 10 - Variable") # It displays a variable importance plot from the random forest model. 
+```
+
+```{r}
+importance(random_forest)
+```
+Podemos ver la importancia de las diferentes variables mostradas en el modelo
+
+## Summary Regression Models
+```{r warning=FALSE}
+jtools::export_summs(model, spatial_lag_model, spatial_error_model)
+```
+
+## Selección de Modelo utilizando RMSE
+```{r}
+Estimation_Method<-c('Linear Regression','Random Forest','Spatial Autorregresive','Spatial Error')
+RMSE<-c(errorml, 44.81,56.11,56.24)
+RMSE_df<-data.frame(Estimation_Method,RMSE)
+RMSE_df<-RMSE_df[order(RMSE),]
+export_table(RMSE_df, format = "md")
+```
+
+# Hallazgos
+  
+1. El modelo lineal indica que la mayoría de variables utilizadas son relevantes con un 99% de confianza. Además de la significancia de las variables, los coeficientes que indican cuánto influye en el cambio de la tasa de covid. Para este modelo, la variable más influyente es el porcentaje de pobreza extrema la cual impacta de forma negativa. Finalmente, la r2 ajustada indica que la tasa de covid puede ser explicada sólo en un 50.64% por las variables seleccionadas lo que sería un indicador de la relevancia de un análisis espacial para un mejor ajuste. El error del modelo fue el mejor de los modelos realizados.
+  
+2. El modelo Random Forest es el segundo que tuvo el menor Root Mean Squared Error, por lo que sería el su uso para realizar predicciones. Al mismo tiempo, un hallazgo muy relevante que nos otorgó fue la relevancia que cada variable tiene para obtener la predicción de la tasa de contagio de COVID. Los porcentajes de densidad poblacional, de pobreza y de acceso a seguro social son los factores que más juegan un papel en definir la cantidad de contagios. Por otro lado, la inclusión financiera y la educación tuvieron un rol menor en el modelo.
+  
+3. El modelo Autorregresivo Espacial presenta un RMSE alto en comparación a los otros modelos. Aunque se puede concluir que el modelo SAR se ajusta mejor a los datos observados que el modelo LM debido a su AIC más bajo, se recomienda realizar un análisis más detallado antes de seleccionar el modelo final.
+  
+4. El modelo de Spatial Error fue el modelo que concedió significancia a más variables, esto puede indicar porque fue el modelo con mayor RMSE. 
+  
+5.El modelo de Spatial Error igualmente fue el modelo con mayor AIC, por lo que podemos decir que son diferentes indicadores los que muestran que fue el modelo menos adecuado para predecir los casos de covid.
+  
+# Recomendación
+  
+1. Después de ver el análisis exploratorio en los municipios de México, es importante que para poder llevar a cabo la expansión, se tome en consideración que aunque el acceso a servicios de salud en zonas sur sea bajo, es importante contar con estos en puntos estratégicos en los centroides encontrados en el análisis, ya que poner servicios de este tipo en estas zonas además de igual en zonas estratégicas considerando las distancias y cantidad de establecimientos de este tipo, podría ayudar a prevenir un mayor índice de fallecimientos al igual que permitiría que las familias afectadas por este virus, tengan un acceso más cercano.
+  
+2. El mapa creado en el reporte que presentaba las diferentes tasas de Covid en los distintos municipios del país reveló los altos índices de casos confirmados de COVID-19 en la zona Norte del país. En esta zona, es clave implementar medidas de prevención y control de infecciones en puntos de servicio de salud para garantizar la seguridad tanto de los pacientes como del personal médico que trabaja en ellos. También se podría considerar la posibilidad de trabajar en colaboración con las autoridades locales y las organizaciones comunitarias para identificar las necesidades específicas de salud de la población en la zona Norte y diseñar estrategias de atención que se ajusten a esas necesidades.
